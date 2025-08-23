@@ -23,13 +23,11 @@ def main():
 
     # Actual implementations (for Python execution)
     FUNCTIONS = {
-    "get_files_info": get_files_info,
-    "get_file_content": get_file_content,
-    "run_python_file": run_python_file,
-    "write_file": write_file,
-     }
-
-
+        "get_files_info": get_files_info,
+        "get_file_content": get_file_content,
+        "run_python_file": run_python_file,
+        "write_file": write_file,
+    }
 
     # Abstract function handler
     def call_function(function_call_part, verbose=False):
@@ -91,7 +89,7 @@ def main():
     client = genai.Client(api_key=api_key)
 
     if len(sys.argv) < 2:
-        print("1")
+        print("Usage: python main.py '<prompt>' [--verbose]")
         sys.exit(1)
 
     # Parse args
@@ -108,36 +106,48 @@ def main():
         types.Content(role="user", parts=[types.Part(text=prompt)]),
     ]
 
-    # Response from Gemini
-    response = client.models.generate_content(
-        model=model,
-        contents=messages,
-        config=types.GenerateContentConfig(
-            tools=[available_functions], system_instruction=system_prompt
-        )
-    )
+    # Conversation Loop
+    for _ in range(20):  # max iterations
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=messages,
+                config=types.GenerateContentConfig(
+                    tools=[available_functions], system_instruction=system_prompt
+                )
+            )
+        except Exception as e:
+            print(f"Fatal error: {e}")
+            break
 
-    prompt_tokens = response.usage_metadata.prompt_token_count
-    response_tokens = response.usage_metadata.candidates_token_count
-
-    if verbose:
-        print(f"User prompt: {prompt}")
-        print(f"Prompt tokens: {prompt_tokens}")
-        print(f"Response tokens: {response_tokens}")
-
-    # Function call or text?
-    if response.candidates[0].content.parts[0].function_call:
-        function_call_part = response.candidates[0].content.parts[0].function_call
-        function_call_result = call_function(function_call_part, verbose=verbose)
-
-        if not function_call_result.parts or not function_call_result.parts[0].function_response.response:
-            raise RuntimeError("Fatal: function call returned no response")
-
+        prompt_tokens = response.usage_metadata.prompt_token_count
+        response_tokens = response.usage_metadata.candidates_token_count
         if verbose:
-            print(f"-> {function_call_result.parts[0].function_response.response}")
-    else:
-        print(response.text)
+            print(f"Prompt tokens: {prompt_tokens}, Response tokens: {response_tokens}")
 
+        # Take first candidate
+        candidate = response.candidates[0]
+        messages.append(candidate.content)  # add model response to history
+
+        part = candidate.content.parts[0]
+
+        # Case 1: Plain text (final answer)
+        if part.text:
+            print("Final response:\n")
+            print(part.text)
+            break
+
+        # Case 2: Function call
+        if part.function_call:
+            function_call_part = part.function_call
+            function_call_result = call_function(function_call_part, verbose=verbose)
+            messages.append(function_call_result)  # add tool result to history
+
+            if verbose:
+                print(f"-> {function_call_result.parts[0].function_response.response}")
+
+    else:
+        print("Max iterations reached without final response.")
 
 if __name__ == "__main__":
     main()
